@@ -36,6 +36,32 @@ uv run uvicorn main:app --reload
 The API is available at <http://127.0.0.1:8000>. Open
 <http://127.0.0.1:8000/docs> to try the endpoints.
 
+### Run the frontend
+
+Requires Node.js 20.9 or newer.
+
+In another terminal:
+
+```shell
+cd frontend/nextjs
+npm install
+npm run dev
+```
+
+Open <http://localhost:3000>. The frontend proxies digest requests to
+`http://127.0.0.1:8000` by default. To use another backend, copy
+`frontend/nextjs/.env.example` to `.env.local` and set `DIGEST_API_URL`.
+In PowerShell, use `npm.cmd` (for example, `npm.cmd run dev`) if the execution
+policy blocks the `npm.ps1` shim; this does not require changing the policy.
+
+### Deploy the frontend to Vercel
+
+Create a Vercel project from this repository and set its **Root Directory** to
+`frontend/nextjs`. The Vercel configuration is in that directory. Set
+`DIGEST_API_URL` in the Vercel project's environment variables to the HTTPS URL
+of a separately deployed FastAPI backend; the frontend config does not deploy
+the Python backend. `DIGEST_API_URL` is required in production.
+
 AI credentials are optional. Without configured providers, GistBox uses the
 extractive fallback by default.
 
