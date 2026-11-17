@@ -11,7 +11,7 @@ from trafilatura.metadata import extract_metadata
 
 from ..agent.digest_agent import DigestAgent
 from ..agent.digest_models import DigestDetailLevel, DigestOutput
-from ..extraction.youtube import YouTubeScraper
+from ..extraction.youtube import TranscriptFetchError, YouTubeScraper
 from .request_context import DigestRequestContext
 
 MAX_REDIRECTS = 5
@@ -176,7 +176,12 @@ def _youtube_video_id(url: str, hostname: str) -> str:
 
 def _extract_youtube_content(url: str, hostname: str) -> ExtractedContent:
     video_id = _youtube_video_id(url, hostname)
-    transcript = YouTubeScraper().get_transcript(video_id)
+    try:
+        transcript = YouTubeScraper().get_transcript(video_id)
+    except TranscriptFetchError as exc:
+        raise URLFetchError(
+            "The YouTube transcript service could not retrieve captions"
+        ) from exc
     if transcript is None or not transcript.text.strip():
         raise ContentExtractionError("No transcript is available for this YouTube video")
     return ExtractedContent(

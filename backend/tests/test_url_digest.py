@@ -5,11 +5,14 @@ from fastapi.testclient import TestClient
 
 from main import app
 from backend.app.agent.digest_models import DigestOutput
+from app.extraction.youtube import TranscriptFetchError
 from app.services.request_context import DigestRequestContext
 from app.services.url_digest import (
     ExtractedContent,
     UnsafeURL,
+    URLFetchError,
     _download_html,
+    _extract_youtube_content,
     _extract_web_content,
     _validate_public_url,
     process_digest_request,
@@ -89,6 +92,39 @@ class URLDigestTests(unittest.TestCase):
         self.assertEqual(context.source_content, "The video transcript.")
         self.assertIsNotNone(context.request_id)
         self.assertIsNotNone(context.received_at)
+
+    def test_youtube_transcript_fetch_error_is_reported_as_upstream_failure(
+        self,
+    ) -> None:
+        with patch(
+            "app.services.url_digest.YouTubeScraper"
+        ) as scraper_class:
+            scraper_class.return_value.get_transcript.side_effect = (
+                TranscriptFetchError("upstream failure")
+            )
+            with self.assertRaises(URLFetchError):
+                _extract_youtube_content(
+                    "https://youtube.com/watch?v=abcdefghijk",
+                    "youtube.com",
+                )
+
+    def test_post_digest_maps_transcript_fetch_error_to_bad_gateway(self) -> None:
+        with patch(
+            "main.process_digest_request",
+            side_effect=URLFetchError(
+                "The YouTube transcript service could not retrieve captions"
+            ),
+        ):
+            response = client.post(
+                "/digest",
+                json={"url": "https://youtube.com/watch?v=abcdefghijk"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["detail"],
+            "The YouTube transcript service could not retrieve captions",
+        )
 
     def test_post_digest_returns_requested_detail_level(self) -> None:
         digest = DigestOutput(title="A Useful Digest", summary="Key points.")

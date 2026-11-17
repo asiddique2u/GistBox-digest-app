@@ -1,10 +1,22 @@
+import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-import os
+
 import feedparser
 from pydantic import BaseModel
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api._errors import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    YouTubeTranscriptApiException,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class TranscriptFetchError(RuntimeError):
+    pass
 
 
 class Transcript(BaseModel):
@@ -55,8 +67,13 @@ class YouTubeScraper:
             return Transcript(text=text)
         except (TranscriptsDisabled, NoTranscriptFound):
             return None
-        except Exception:
-            return None
+        except YouTubeTranscriptApiException as exc:
+            logger.exception(
+                "Failed to fetch YouTube transcript for video %s", video_id
+            )
+            raise TranscriptFetchError(
+                "The YouTube transcript service could not retrieve captions"
+            ) from exc
 
     def get_latest_videos(self, channel_id: str, hours: int = 24) -> list[ChannelVideo]:
         feed = feedparser.parse(self._get_rss_url(channel_id))
