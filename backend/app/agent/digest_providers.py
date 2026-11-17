@@ -5,37 +5,42 @@ from typing import Protocol
 from openai import OpenAI
 
 from .digest_models import (
-    DIGEST_LENGTH_RATIOS,
     MAX_DIGEST_CONTENT_CHARS,
     DigestDetailLevel,
     DigestOutput,
-    summary_word_range,
 )
 
 logger = logging.getLogger(__name__)
 
-PROMPT = """You are an expert AI news analyst specializing in summarizing technical articles, research papers, and video content about artificial intelligence.
+PROMPT = """You are an expert analyst who creates faithful, useful digests of articles, tutorials, reviews, educational content, research, and videos.
 
-Create a faithful, informative digest that helps readers understand the key points and significance of the content.
+Create a complete, informative digest that helps readers understand the source's important points and significance.
 
 Guidelines:
 - Create a compelling title (5-10 words) that captures the essence of the content
-- Use the requested detail level and word range as soft guidance, not a strict limit
-- Prioritize a useful, coherent summary over matching an exact word count
-- Focus on actionable insights and implications
+- For non-video sources, write the summary as Markdown bullets, not as a prose paragraph or a single sentence
+- For videos, begin the summary with a brief overview paragraph explaining what the video is about and how it presents the subject, then follow with detailed content bullets
+- Put distinct key points in separate bullets instead of combining them into one bullet
+- Do not impose a word-count, sentence-count, or bullet-count limit; cover all important material
+- Use the requested detail level to guide depth, not to cap the summary's size
+- Adapt the structure to the source: use ordered steps with explanations for tutorials; identify reviewed products and report ratings only when the source provides them; list educational topics with a brief explanation of each; for research, include findings, methods, evidence, and limitations when available
+- For other content, organize the key ideas, supporting details, and implications into clear bullets
+- Focus on actionable insights and implications where relevant
 - Use clear, accessible language while maintaining technical accuracy
 - Avoid marketing fluff - focus on substance
 - Do not invent details that are absent from the source
+- Never invent product ratings, steps, topics, or supporting evidence
 - Return only a JSON object with "title" and "summary" string fields"""
 
-DEFAULT_PROVIDER_ORDER = ("openai", "gemini", "anthropic", "ollama")
+DEFAULT_PROVIDER_ORDER = ("openai", "gemini", "anthropic", "ollama", "openrouter")
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
 PROVIDER_NAMES = frozenset(DEFAULT_PROVIDER_ORDER)
 REQUEST_TIMEOUT_SECONDS = 30
-SENTENCE_GUIDANCE: dict[DigestDetailLevel, str] = {
-    "short": "about 2-4 sentences",
-    "medium": "about 4-8 sentences",
-    "detailed": "about 8-12 sentences",
+DETAIL_GUIDANCE: dict[DigestDetailLevel, str] = {
+    "short": "Prioritize the essential takeaways while retaining the details needed to understand them.",
+    "medium": "Cover the main points and the important context and supporting details.",
+    "detailed": "Thoroughly cover the important ideas, context, examples, steps, and supporting details.",
 }
 
 
@@ -47,8 +52,15 @@ class DigestProvider(Protocol):
         title: str,
         content: str,
         article_type: str,
-        detail_level: DigestDetailLevel = "medium",
+        detail_level: DigestDetailLevel = "detailed",
     ) -> DigestOutput: ...
+
+
+def _detail_guidance(detail_level: DigestDetailLevel) -> str:
+    try:
+        return DETAIL_GUIDANCE[detail_level]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported digest detail level: {detail_level}") from exc
 
 
 def _user_prompt(
@@ -58,17 +70,12 @@ def _user_prompt(
     detail_level: DigestDetailLevel,
 ) -> str:
     source = content[:MAX_DIGEST_CONTENT_CHARS]
-    minimum_words, maximum_words = summary_word_range(source, detail_level)
-    minimum_ratio, maximum_ratio = DIGEST_LENGTH_RATIOS[detail_level]
     return (
         f"Create a digest for this {article_type}.\n"
         f"Title: {title}\n"
-        f"Detail level: {detail_level}; target {SENTENCE_GUIDANCE[detail_level]}.\n"
-        f"Aim for {minimum_words}-{maximum_words} words, "
-        f"approximately {minimum_ratio:.0%}-{maximum_ratio:.0%} of the "
-        f"{len(source.split())}-word source text. This is a soft target; "
-        "prioritize a useful, coherent summary over hitting the exact word "
-        "count. The summary word count does not include the title.\n"
+        f"Detail level: {detail_level}. {_detail_guidance(detail_level)}\n"
+        "Include as many bullets as needed to cover the important material; "
+        "do not shorten the digest to fit a target length.\n"
         f"Content:\n{source}"
     )
 
@@ -82,10 +89,13 @@ def _parse_digest(raw: str | None) -> DigestOutput:
 class OpenAIDigestProvider:
     name = "openai"
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(
+        self, api_key: str, model: str, base_url: str | None = None
+    ) -> None:
         self.model = model
         self.client = OpenAI(
             api_key=api_key,
+            base_url=base_url,
             timeout=REQUEST_TIMEOUT_SECONDS,
             max_retries=0,
         )
@@ -95,7 +105,7 @@ class OpenAIDigestProvider:
         title: str,
         content: str,
         article_type: str,
-        detail_level: DigestDetailLevel = "medium",
+        detail_level: DigestDetailLevel = "detailed",
     ) -> DigestOutput:
         response = self.client.chat.completions.create(
             model=self.model,
@@ -112,6 +122,17 @@ class OpenAIDigestProvider:
             temperature=0.7,
         )
         return _parse_digest(response.choices[0].message.content)
+
+
+class OpenRouterDigestProvider(OpenAIDigestProvider):
+    name = "openrouter"
+
+    def __init__(self, api_key: str, model: str) -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url="https://openrouter.ai/api/v1",
+        )
 
 
 class OllamaDigestProvider(OpenAIDigestProvider):
@@ -147,7 +168,7 @@ class GeminiDigestProvider:
         title: str,
         content: str,
         article_type: str,
-        detail_level: DigestDetailLevel = "medium",
+        detail_level: DigestDetailLevel = "detailed",
     ) -> DigestOutput:
         response = self.client.interactions.create(
             model=self.model,
@@ -182,14 +203,11 @@ class AnthropicDigestProvider:
         title: str,
         content: str,
         article_type: str,
-        detail_level: DigestDetailLevel = "medium",
+        detail_level: DigestDetailLevel = "detailed",
     ) -> DigestOutput:
-        _, maximum_words = summary_word_range(
-            content[:MAX_DIGEST_CONTENT_CHARS], detail_level
-        )
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=max(512, maximum_words * 2 + 128),
+            max_tokens=64000,
             system=PROMPT,
             messages=[
                 {
@@ -261,6 +279,17 @@ def build_digest_providers() -> list[DigestProvider]:
                             model=model,
                             base_url=os.getenv(
                                 "OLLAMA_BASE_URL", "http://localhost:11434/v1"
+                            ),
+                        )
+                    )
+            elif name == "openrouter":
+                api_key = os.getenv("OPENROUTER_API_KEY")
+                if api_key:
+                    providers.append(
+                        OpenRouterDigestProvider(
+                            api_key=api_key,
+                            model=os.getenv(
+                                "OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL
                             ),
                         )
                     )

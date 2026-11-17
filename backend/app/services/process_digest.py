@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from app.services.agent.digest_agent import DigestAgent
+from ..agent.digest_agent import DigestAgent
 from app.database.repository import Repository
 
 logging.basicConfig(

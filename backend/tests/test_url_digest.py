@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
-from app.services.agent.digest_models import DigestOutput
+from backend.app.agent.digest_models import DigestOutput
 from app.services.url_digest import (
     UnsafeURL,
     _download_html,
@@ -43,7 +43,7 @@ class URLDigestTests(unittest.TestCase):
             detail_level="detailed",
         )
 
-    def test_post_digest_defaults_to_medium(self) -> None:
+    def test_post_digest_defaults_to_detailed(self) -> None:
         digest = DigestOutput(title="A Useful Digest", summary="Key points.")
         with patch("main.generate_url_digest", return_value=digest) as generate:
             response = client.post(
@@ -52,10 +52,10 @@ class URLDigestTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["detail_level"], "medium")
+        self.assertEqual(response.json()["detail_level"], "detailed")
         generate.assert_called_once_with(
             "https://example.com/article",
-            detail_level="medium",
+            detail_level="detailed",
         )
 
     def test_post_digest_rejects_unknown_detail_level(self) -> None:

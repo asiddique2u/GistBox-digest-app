@@ -3,16 +3,17 @@ import os
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from app.services.agent import digest_agent
-from app.services.agent import digest_providers
-from app.services.agent.digest_agent import DigestAgent
-from app.services.agent.digest_models import DigestOutput
-from app.services.agent.digest_providers import (
+from backend.app.agent import digest_agent
+from backend.app.agent import digest_providers
+from backend.app.agent.digest_agent import DigestAgent
+from backend.app.agent.digest_models import DigestOutput
+from backend.app.agent.digest_providers import (
     AnthropicDigestProvider,
     GeminiDigestProvider,
     OpenAIDigestProvider,
+    OpenRouterDigestProvider,
 )
-from app.services.agent.digest_models import DigestDetailLevel, summary_word_range
+from backend.app.agent.digest_models import DigestDetailLevel
 
 
 class StubProvider:
@@ -27,7 +28,7 @@ class StubProvider:
         title: str,
         content: str,
         article_type: str,
-        detail_level: DigestDetailLevel = "medium",
+        detail_level: DigestDetailLevel = "detailed",
     ) -> DigestOutput:
         self.calls += 1
         self.detail_levels.append(detail_level)
@@ -37,13 +38,6 @@ class StubProvider:
 
 
 class DigestAgentTests(unittest.TestCase):
-    def test_summary_word_ranges_match_detail_levels(self) -> None:
-        content = " ".join(["word"] * 1000)
-
-        self.assertEqual(summary_word_range(content, "short"), (50, 100))
-        self.assertEqual(summary_word_range(content, "medium"), (150, 250))
-        self.assertEqual(summary_word_range(content, "detailed"), (250, 350))
-
     def test_gemini_provider_uses_current_default_model(self) -> None:
         with (
             patch.dict(
@@ -63,7 +57,65 @@ class DigestAgentTests(unittest.TestCase):
             model="gemini-3.5-flash-lite",
         )
 
+    def test_openrouter_provider_uses_configured_key_and_model(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "DIGEST_PROVIDER_ORDER": "openrouter",
+                    "OPENROUTER_API_KEY": "test-key",
+                },
+                clear=True,
+            ),
+            patch.object(
+                digest_providers, "OpenRouterDigestProvider"
+            ) as provider_class,
+        ):
+            digest_providers.build_digest_providers()
+
+        provider_class.assert_called_once_with(
+            api_key="test-key",
+            model="openai/gpt-4o-mini",
+        )
+
+    def test_openrouter_provider_uses_openrouter_api_endpoint(self) -> None:
+        with patch("backend.app.agent.digest_providers.OpenAI") as openai:
+            OpenRouterDigestProvider("test-key", "test-model")
+
+        openai.assert_called_once_with(
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+            timeout=digest_providers.REQUEST_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
+
+    def test_prompt_requests_content_aware_bullets_without_length_target(self) -> None:
+        prompt = digest_providers._user_prompt(
+            "Source", "Content.", "tutorial", "detailed"
+        )
+
+        self.assertIn("Markdown bullets", digest_providers.PROMPT)
+        self.assertIn("ordered steps", digest_providers.PROMPT)
+        self.assertIn("reviewed products", digest_providers.PROMPT)
+        self.assertIn("educational topics", digest_providers.PROMPT)
+        self.assertIn("do not shorten the digest to fit a target length", prompt)
+        self.assertNotIn("word count", prompt.lower())
+
+    def test_video_prompt_starts_with_overview_before_detail_bullets(self) -> None:
+        self.assertIn(
+            "begin the summary with a brief overview paragraph",
+            digest_providers.PROMPT,
+        )
+        self.assertIn(
+            "then follow with detailed content bullets",
+            digest_providers.PROMPT,
+        )
+
     def test_loads_backend_dotenv_before_building_providers(self) -> None:
+        self.assertEqual(
+            digest_agent.DOTENV_PATH,
+            digest_agent.Path(digest_agent.__file__).resolve().parents[1] / ".env",
+        )
         with (
             patch.object(digest_agent, "load_dotenv") as load_dotenv,
             patch.object(
@@ -84,7 +136,7 @@ class DigestAgentTests(unittest.TestCase):
             allow_extractive_fallback=False,
         )
 
-        with self.assertLogs("app.services.agent.digest_agent", level="WARNING"):
+        with self.assertLogs("backend.app.agent.digest_agent", level="WARNING"):
             result = agent.generate_digest("Article", "Article content.", "article")
 
         self.assertEqual(result, backup_result)
@@ -99,7 +151,7 @@ class DigestAgentTests(unittest.TestCase):
             for index in range(20)
         )
 
-        with self.assertLogs("app.services.agent.digest_agent", level="WARNING"):
+        with self.assertLogs("backend.app.agent.digest_agent", level="WARNING"):
             result = agent.generate_digest(
                 "  Original   Article ",
                 content,
@@ -108,9 +160,12 @@ class DigestAgentTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result.title, "Original Article")
-        self.assertGreaterEqual(len(result.summary.split()), 15)
+        self.assertTrue(
+            all(line.startswith("- ") for line in result.summary.splitlines())
+        )
+        self.assertEqual(len(result.summary.splitlines()), 20)
 
-    def test_accepts_ai_summary_below_requested_minimum(self) -> None:
+    def test_accepts_concise_ai_summary_without_retrying(self) -> None:
         content = " ".join(
             f"Sentence {index} contains key information."
             for index in range(20)
@@ -150,6 +205,17 @@ class DigestAgentTests(unittest.TestCase):
         )
 
         self.assertEqual(digest, result)
+        self.assertEqual(provider.detail_levels, ["detailed"])
+
+    def test_defaults_to_detailed_digest(self) -> None:
+        provider = StubProvider(
+            "primary",
+            DigestOutput(title="Detailed", summary="- Key details."),
+        )
+        agent = DigestAgent(providers=[provider], allow_extractive_fallback=False)
+
+        agent.generate_digest("Article", "Content.", "article")
+
         self.assertEqual(provider.detail_levels, ["detailed"])
 
     def test_openai_provider_parses_structured_response(self) -> None:
@@ -205,7 +271,7 @@ class DigestAgentTests(unittest.TestCase):
     def test_returns_none_for_empty_content_without_ai_providers(self) -> None:
         agent = DigestAgent(providers=[], allow_extractive_fallback=True)
 
-        with self.assertLogs("app.services.agent.digest_agent", level="WARNING"):
+        with self.assertLogs("backend.app.agent.digest_agent", level="WARNING"):
             result = agent.generate_digest("Article", "  ", "article")
 
         self.assertIsNone(result)

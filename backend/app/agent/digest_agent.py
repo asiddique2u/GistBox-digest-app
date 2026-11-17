@@ -11,7 +11,6 @@ from .digest_models import (
     MAX_DIGEST_CONTENT_CHARS,
     DigestDetailLevel,
     DigestOutput,
-    summary_word_range,
 )
 from .digest_providers import (
     PROMPT,
@@ -20,7 +19,7 @@ from .digest_providers import (
 )
 
 logger = logging.getLogger(__name__)
-DOTENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+DOTENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 
 __all__ = ["DigestAgent", "DigestOutput", "PROMPT"]
 
@@ -37,24 +36,17 @@ def _extractive_fallback_enabled() -> bool:
 def _extractive_digest(
     title: str,
     content: str,
-    detail_level: DigestDetailLevel,
 ) -> Optional[DigestOutput]:
     clean_content = " ".join(content[:MAX_DIGEST_CONTENT_CHARS].split())
     if not clean_content:
         return None
 
     sentences = re.split(r"(?<=[.!?])\s+", clean_content)
-    minimum_words, _ = summary_word_range(clean_content, detail_level)
-    selected_sentences = []
-    selected_word_count = 0
-    for sentence in sentences:
-        if not sentence.strip():
-            continue
-        selected_sentences.append(sentence)
-        selected_word_count += len(sentence.split())
-        if selected_word_count >= minimum_words:
-            break
-    summary = " ".join(selected_sentences).strip()
+    summary = "\n".join(
+        f"- {sentence.strip()}"
+        for sentence in sentences
+        if sentence.strip()
+    )
 
     clean_title = " ".join(title.split()).strip()
     if not clean_title:
@@ -83,7 +75,7 @@ class DigestAgent:
         title: str,
         content: str,
         article_type: str,
-        detail_level: DigestDetailLevel = "medium",
+        detail_level: DigestDetailLevel = "detailed",
     ) -> Optional[DigestOutput]:
         for provider in self.providers:
             try:
@@ -108,7 +100,7 @@ class DigestAgent:
                 logger.warning(
                     "No AI providers are configured; using extractive digest"
                 )
-            return _extractive_digest(title, content, detail_level)
+            return _extractive_digest(title, content)
 
         if self.providers:
             logger.error(

@@ -8,9 +8,9 @@ import httpx
 import trafilatura
 from trafilatura.metadata import extract_metadata
 
-from app.services.agent.digest_agent import DigestAgent
-from app.services.agent.digest_models import DigestDetailLevel, DigestOutput
-from app.services.extraction.youtube import YouTubeScraper
+from ..agent.digest_agent import DigestAgent
+from ..agent.digest_models import DigestDetailLevel, DigestOutput
+from ..extraction.youtube import YouTubeScraper
 
 MAX_REDIRECTS = 5
 MAX_HTML_BYTES = 2 * 1024 * 1024
@@ -202,7 +202,7 @@ def _extract_web_content(url: str) -> ExtractedContent:
 
 
 def generate_url_digest(
-    url: str, detail_level: DigestDetailLevel = "medium"
+    url: str, detail_level: DigestDetailLevel = "detailed"
 ) -> DigestOutput:
     hostname, _ = _validate_public_url(url)
     if hostname in YOUTUBE_HOSTS:

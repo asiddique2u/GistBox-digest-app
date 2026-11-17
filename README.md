@@ -9,9 +9,10 @@ an available AI provider, and fall back to an extractive summary when needed.
 ## Features
 
 - Digest public article URLs and YouTube videos with transcripts.
-- Choose a `short`, `medium`, or `detailed` digest.
+- Choose `short`, `medium`, or `detailed` coverage without a generated
+  word-count cap.
 - Try configured AI providers in order, with support for OpenAI, Gemini,
-  Anthropic, and Ollama.
+  Anthropic, Ollama, and OpenRouter.
 - Use an extractive fallback when AI providers are unavailable.
 - Explore the API interactively with the generated OpenAPI docs.
 
@@ -47,30 +48,31 @@ Request a digest for a public article or supported YouTube URL:
 ```json
 {
   "url": "https://example.com/article",
-  "detail_level": "medium"
+  "detail_level": "detailed"
 }
 ```
 
-`detail_level` is optional and defaults to `medium`. Supported values:
+`detail_level` is optional and defaults to `detailed`. It controls coverage depth;
+there is no generated word-count limit. Digests use Markdown bullets and adapt
+to the source (for example, video summaries start with an overview of what and
+how the video presents its subject before detailed bullets; tutorials use
+numbered steps; reviews identify products and source-provided ratings; and
+educational digests cover topics with brief explanations).
 
-| Level | Approximate length target |
+| Level | Coverage |
 | --- | --- |
-| `short` | 5–10% of the source |
-| `medium` | 15–25% of the source |
-| `detailed` | 25–35% of the source |
-
-These are soft targets, not minimums. The estimates use the word count of the
-up-to-8,000-character excerpt sent to the model; a provider may return a
-shorter digest.
+| `short` | Essential takeaways with enough detail to understand them |
+| `medium` | Main points, context, and important supporting details |
+| `detailed` | Thorough coverage of important ideas, examples, steps, and supporting details |
 
 Example response:
 
 ```json
 {
   "url": "https://example.com/article",
-  "detail_level": "medium",
+  "detail_level": "detailed",
   "title": "A concise digest title",
-  "summary": "The article's main points and why they matter."
+  "summary": "- The article's main point and supporting details.\n- Why the findings matter."
 }
 ```
 
@@ -79,7 +81,7 @@ In PowerShell, you can call the endpoint with:
 ```powershell
 $body = @{
   url = "https://example.com/article"
-  detail_level = "medium"
+  detail_level = "detailed"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -113,10 +115,13 @@ GEMINI_MODEL=gemini-3.5-flash-lite
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-sonnet-4-5
 
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openai/gpt-4o-mini
+
 OLLAMA_MODEL=
 OLLAMA_BASE_URL=http://localhost:11434/v1
 
-DIGEST_PROVIDER_ORDER=openai,gemini,anthropic,ollama
+DIGEST_PROVIDER_ORDER=openai,gemini,anthropic,ollama,openrouter
 DIGEST_EXTRACTIVE_FALLBACK=true
 ```
 
@@ -124,6 +129,9 @@ Provider details:
 
 - Only providers with credentials are attempted. Gemini accepts
   `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+- OpenRouter uses `OPENROUTER_API_KEY` and defaults to
+  `openai/gpt-4o-mini`; set `OPENROUTER_MODEL` to choose another supported
+  model.
 - Ollama is enabled when `OLLAMA_MODEL` is set and its server is available.
 - Providers are tried in `DIGEST_PROVIDER_ORDER`; each request has a
   30-second timeout.
