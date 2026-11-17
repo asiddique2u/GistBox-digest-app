@@ -126,6 +126,11 @@ Only public HTTP(S) destinations are accepted. Private destinations and
 redirects to private addresses are rejected. The endpoint accepts HTML pages
 up to 2 MB; unsupported content types are rejected.
 
+Each digest request keeps its source text or YouTube transcript, metadata, and
+result in a request-scoped in-memory context. The context is cleared after the
+response is sent; no request data is currently persisted. Its structured
+fields provide a clear point to add an opt-in retention store later.
+
 ## AI provider configuration
 
 Create `backend/app/.env` and add credentials for the providers you want to
@@ -172,6 +177,7 @@ backend/
   app/
     schemas/       API request and response models
     services/
+      request_context.py  Request-scoped transient digest data
       agent/       Digest generation and provider adapters
       extraction/  Web and video content extraction
   tests/           Backend tests
@@ -192,6 +198,14 @@ From the `backend` directory:
 uv run python -m unittest discover -s tests
 ```
 
+## Deploy the backend to Render
+
+The root `render.yaml` defines the FastAPI web service and does not create a
+PostgreSQL database. In Render, create a **Blueprint** from this repository;
+Render will use the configured build command, start command, and `/health`
+check. Add any AI provider keys in the Render service's environment settings.
+Then set `DIGEST_API_URL` in Vercel to the Render service's HTTPS URL.
+
 ## Roadmap
 
 The longer-term GistBox product direction includes:
@@ -200,4 +214,4 @@ The longer-term GistBox product direction includes:
 - Questions and answers grounded in extracted content, with source references.
 - Research across multiple URLs and documents.
 - Web and mobile clients using the same backend API.
-- User accounts, persistence, and deployment.
+- User accounts and opt-in data retention.

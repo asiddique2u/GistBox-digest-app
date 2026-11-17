@@ -5,11 +5,14 @@ from fastapi.testclient import TestClient
 
 from main import app
 from backend.app.agent.digest_models import DigestOutput
+from app.services.request_context import DigestRequestContext
 from app.services.url_digest import (
+    ExtractedContent,
     UnsafeURL,
     _download_html,
     _extract_web_content,
     _validate_public_url,
+    process_digest_request,
 )
 
 
@@ -17,9 +20,88 @@ client = TestClient(app)
 
 
 class URLDigestTests(unittest.TestCase):
+    def test_digest_request_context_collects_source_data(self) -> None:
+        context = DigestRequestContext(
+            url="https://example.com/article",
+            detail_level="medium",
+        )
+        extracted = ExtractedContent(
+            title="A Useful Article",
+            text="The article source text.",
+            article_type="article",
+        )
+        digest = DigestOutput(title="A Useful Digest", summary="Key points.")
+
+        with (
+            patch(
+                "app.services.url_digest._validate_public_url",
+                return_value=("example.com", 443),
+            ),
+            patch(
+                "app.services.url_digest._extract_web_content",
+                return_value=extracted,
+            ),
+            patch("app.services.url_digest.DigestAgent") as agent_class,
+        ):
+            agent_class.return_value.generate_digest.return_value = digest
+            result = process_digest_request(context)
+
+        self.assertEqual(result, digest)
+        self.assertEqual(context.article_type, "article")
+        self.assertEqual(context.title, "A Useful Article")
+        self.assertEqual(context.source_content, "The article source text.")
+        self.assertEqual(context.digest, digest)
+        self.assertIsNotNone(context.completed_at)
+        agent_class.return_value.generate_digest.assert_called_once_with(
+            title="A Useful Article",
+            content="The article source text.",
+            article_type="article",
+            detail_level="medium",
+        )
+
+    def test_digest_request_context_captures_youtube_transcript(self) -> None:
+        context = DigestRequestContext(
+            url="https://youtube.com/watch?v=abcdefghijk",
+            detail_level="short",
+        )
+        extracted = ExtractedContent(
+            title="A Video",
+            text="The video transcript.",
+            article_type="youtube",
+        )
+        digest = DigestOutput(title="A Video Digest", summary="Key points.")
+
+        with (
+            patch(
+                "app.services.url_digest._validate_public_url",
+                return_value=("youtube.com", 443),
+            ),
+            patch(
+                "app.services.url_digest._extract_youtube_content",
+                return_value=extracted,
+            ),
+            patch("app.services.url_digest.DigestAgent") as agent_class,
+        ):
+            agent_class.return_value.generate_digest.return_value = digest
+            process_digest_request(context)
+
+        self.assertEqual(context.article_type, "youtube")
+        self.assertEqual(context.source_content, "The video transcript.")
+        self.assertIsNotNone(context.request_id)
+        self.assertIsNotNone(context.received_at)
+
     def test_post_digest_returns_requested_detail_level(self) -> None:
         digest = DigestOutput(title="A Useful Digest", summary="Key points.")
-        with patch("main.generate_url_digest", return_value=digest) as generate:
+
+        def generate(context: DigestRequestContext) -> DigestOutput:
+            self.assertEqual(context.url, "https://example.com/article")
+            self.assertEqual(context.detail_level, "detailed")
+            context.title = digest.title
+            context.source_content = "The source text."
+            context.digest = digest
+            return digest
+
+        with patch("main.process_digest_request", side_effect=generate) as process:
             response = client.post(
                 "/digest",
                 json={
@@ -38,14 +120,20 @@ class URLDigestTests(unittest.TestCase):
                 "summary": "Key points.",
             },
         )
-        generate.assert_called_once_with(
-            "https://example.com/article",
-            detail_level="detailed",
-        )
+        process.assert_called_once()
+        context = process.call_args.args[0]
+        self.assertEqual(context.url, "")
+        self.assertIsNone(context.request_id)
+        self.assertIsNone(context.received_at)
+        self.assertIsNone(context.completed_at)
+        self.assertIsNone(context.article_type)
+        self.assertIsNone(context.title)
+        self.assertIsNone(context.source_content)
+        self.assertIsNone(context.digest)
 
     def test_post_digest_defaults_to_detailed(self) -> None:
         digest = DigestOutput(title="A Useful Digest", summary="Key points.")
-        with patch("main.generate_url_digest", return_value=digest) as generate:
+        with patch("main.process_digest_request", return_value=digest) as process:
             response = client.post(
                 "/digest",
                 json={"url": "https://example.com/article"},
@@ -53,13 +141,14 @@ class URLDigestTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["detail_level"], "detailed")
-        generate.assert_called_once_with(
-            "https://example.com/article",
-            detail_level="detailed",
+        process.assert_called_once()
+        self.assertEqual(
+            process.call_args.args[0].detail_level,
+            "detailed",
         )
 
     def test_post_digest_rejects_unknown_detail_level(self) -> None:
-        with patch("main.generate_url_digest") as generate:
+        with patch("main.process_digest_request") as process:
             response = client.post(
                 "/digest",
                 json={
@@ -69,18 +158,25 @@ class URLDigestTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 422)
-        generate.assert_not_called()
+        process.assert_not_called()
 
     def test_post_digest_rejects_non_http_urls(self) -> None:
-        with patch("main.generate_url_digest") as generate:
+        with patch("main.process_digest_request") as process:
             response = client.post("/digest", json={"url": "file:///etc/passwd"})
 
         self.assertEqual(response.status_code, 422)
-        generate.assert_not_called()
+        process.assert_not_called()
 
     def test_post_digest_maps_unsafe_url_to_client_error(self) -> None:
+        context = DigestRequestContext(
+            url="https://example.com/article",
+            detail_level="detailed",
+        )
         with patch(
-            "main.generate_url_digest",
+            "main.DigestRequestContext",
+            return_value=context,
+        ), patch(
+            "main.process_digest_request",
             side_effect=UnsafeURL("The URL must resolve to a public internet address"),
         ):
             response = client.post(
@@ -89,6 +185,8 @@ class URLDigestTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(context.url, "")
+        self.assertIsNone(context.request_id)
 
     def test_private_ip_url_is_rejected(self) -> None:
         with self.assertRaises(UnsafeURL):
