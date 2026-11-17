@@ -2,6 +2,7 @@ import ipaddress
 import re
 import socket
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
@@ -11,6 +12,7 @@ from trafilatura.metadata import extract_metadata
 from ..agent.digest_agent import DigestAgent
 from ..agent.digest_models import DigestDetailLevel, DigestOutput
 from ..extraction.youtube import YouTubeScraper
+from .request_context import DigestRequestContext
 
 MAX_REDIRECTS = 5
 MAX_HTML_BYTES = 2 * 1024 * 1024
@@ -201,21 +203,34 @@ def _extract_web_content(url: str) -> ExtractedContent:
     return ExtractedContent(title=title, text=text, article_type="article")
 
 
-def generate_url_digest(
-    url: str, detail_level: DigestDetailLevel = "detailed"
-) -> DigestOutput:
-    hostname, _ = _validate_public_url(url)
+def process_digest_request(context: DigestRequestContext) -> DigestOutput:
+    hostname, _ = _validate_public_url(context.url)
     if hostname in YOUTUBE_HOSTS:
-        content = _extract_youtube_content(url, hostname)
+        content = _extract_youtube_content(context.url, hostname)
     else:
-        content = _extract_web_content(url)
+        content = _extract_web_content(context.url)
 
+    context.article_type = content.article_type
+    context.title = content.title
+    context.source_content = content.text
     digest = DigestAgent().generate_digest(
         title=content.title,
         content=content.text,
         article_type=content.article_type,
-        detail_level=detail_level,
+        detail_level=context.detail_level,
     )
     if digest is None:
         raise DigestGenerationError("Digest generation failed")
+    context.digest = digest
+    context.completed_at = datetime.now(timezone.utc)
     return digest
+
+
+def generate_url_digest(
+    url: str, detail_level: DigestDetailLevel = "detailed"
+) -> DigestOutput:
+    context = DigestRequestContext(url=url, detail_level=detail_level)
+    try:
+        return process_digest_request(context)
+    finally:
+        context.clear()

@@ -32,7 +32,7 @@ Guidelines:
 - Never invent product ratings, steps, topics, or supporting evidence
 - Return only a JSON object with "title" and "summary" string fields"""
 
-DEFAULT_PROVIDER_ORDER = ("openai", "gemini", "anthropic", "ollama", "openrouter")
+DEFAULT_PROVIDER_ORDER = ("openrouter", "gemini", "anthropic", "ollama","openai")
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
 PROVIDER_NAMES = frozenset(DEFAULT_PROVIDER_ORDER)

@@ -35,17 +35,34 @@ uv run uvicorn --app-dir backend main:app --reload
 The API is available at <http://127.0.0.1:8000>. Open
 <http://127.0.0.1:8000/docs> to try the endpoints.
 
-AI credentials are optional. Without configured providers, GistBox uses the
-extractive fallback by default.
+### Run the frontend
 
-To run the website locally, open another terminal:
+Requires Node.js 20.9 or newer.
+
+In another terminal:
 
 ```shell
 cd frontend/nextjs
 npm install
-Copy-Item .env.example .env.local
 npm run dev
 ```
+
+Open <http://localhost:3000>. The frontend proxies digest requests to
+`http://127.0.0.1:8000` by default. To use another backend, copy
+`frontend/nextjs/.env.example` to `.env.local` and set `DIGEST_API_URL`.
+In PowerShell, use `npm.cmd` (for example, `npm.cmd run dev`) if the execution
+policy blocks the `npm.ps1` shim; this does not require changing the policy.
+
+### Deploy the frontend to Vercel
+
+Create a Vercel project from this repository and set its **Root Directory** to
+`frontend/nextjs`. The Vercel configuration is in that directory. Set
+`DIGEST_API_URL` in the Vercel project's environment variables to the HTTPS URL
+of a separately deployed FastAPI backend; the frontend config does not deploy
+the Python backend. `DIGEST_API_URL` is required in production.
+
+AI credentials are optional. Without configured providers, GistBox uses the
+extractive fallback by default.
 
 The website is available at <http://localhost:3000>.
 
@@ -110,6 +127,11 @@ Only public HTTP(S) destinations are accepted. Private destinations and
 redirects to private addresses are rejected. The endpoint accepts HTML pages
 up to 2 MB; unsupported content types are rejected.
 
+Each digest request keeps its source text or YouTube transcript, metadata, and
+result in a request-scoped in-memory context. The context is cleared after the
+response is sent; no request data is currently persisted. Its structured
+fields provide a clear point to add an opt-in retention store later.
+
 ## AI provider configuration
 
 Create `backend/app/.env` and add credentials for the providers you want to
@@ -156,6 +178,7 @@ backend/
   app/
     schemas/       API request and response models
     services/
+      request_context.py  Request-scoped transient digest data
       agent/       Digest generation and provider adapters
       extraction/  Web and video content extraction
   tests/           Backend tests
@@ -177,6 +200,16 @@ From the `backend` directory:
 uv run python -m unittest discover -s tests
 ```
 
+## Deploy the backend to Render
+
+The root `render.yaml` defines the FastAPI web service and does not create a
+PostgreSQL database. In Render, create a **Blueprint** from this repository;
+Render will use the configured build command, start command, and `/health`
+check. Add any AI provider keys in the Render service's environment settings.
+Then set `DIGEST_API_URL` in Vercel to the Render service's HTTPS URL. The
+free web-service plan may spin down when idle, so the first request after a
+quiet period can take longer.
+
 ## Roadmap
 
 The longer-term GistBox product direction includes:
@@ -185,40 +218,4 @@ The longer-term GistBox product direction includes:
 - Questions and answers grounded in extracted content, with source references.
 - Research across multiple URLs and documents.
 - Web and mobile clients using the same backend API.
-- User accounts, persistence, and deployment.
-
-## Deployment
-
-The API is configured as a Render web service in `render.yaml`; the website
-deploys separately to Vercel.
-
-### Deploy the API to Render
-
-1. Push the repository to GitHub and create a Render **Blueprint** from it.
-   Render will use `render.yaml` at the repository root, install the locked
-   dependencies with `uv`, and check the service at `/health`.
-2. Set `FRONTEND_ORIGINS` in the Render service's environment to the exact
-   website origin, for example `https://your-project.vercel.app`. Multiple
-   origins can be comma-separated. Until the Vercel URL is available, use
-   `http://localhost:3000`.
-3. Add any AI provider API keys you want to use in Render's environment
-   settings. Without keys, the extractive fallback remains available.
-4. Copy the service's public URL, such as `https://gistbox-api.onrender.com`.
-
-The Blueprint uses Render's free web-service plan. Free services can spin down
-when idle, so the first request after a quiet period may take longer.
-
-### Deploy the website to Vercel
-
-1. Import the same GitHub repository as a Vercel project.
-2. Set **Root Directory** to `frontend/nextjs`; Vercel should detect Next.js.
-3. Add `NEXT_PUBLIC_API_URL` with the Render service URL (no trailing slash),
-   then deploy.
-4. Update Render's `FRONTEND_ORIGINS` to the exact Vercel production URL and
-   redeploy/restart the API. Add any Vercel preview origins you want to permit
-   as additional comma-separated values.
-
-For local frontend development, set `NEXT_PUBLIC_API_URL` in
-`frontend/nextjs/.env.local` to `http://localhost:8000`. The
-`NEXT_PUBLIC_API_URL` value is public and must contain only the API URL; never
-put API keys in `NEXT_PUBLIC_` variables.
+- User accounts and opt-in data retention.
