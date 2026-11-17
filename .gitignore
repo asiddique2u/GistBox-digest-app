@@ -9,6 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
+# Node.js and Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
 # Environment variables and secrets
 .env
 .env.*

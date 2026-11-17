@@ -17,6 +17,32 @@ client = TestClient(app)
 
 
 class URLDigestTests(unittest.TestCase):
+    def test_cors_allows_configured_local_frontend(self) -> None:
+        response = client.options(
+            "/digest",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "http://localhost:3000",
+        )
+
+    def test_cors_rejects_unconfigured_origin(self) -> None:
+        response = client.options(
+            "/digest",
+            headers={
+                "Origin": "https://untrusted.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+        self.assertNotIn("access-control-allow-origin", response.headers)
+
     def test_post_digest_returns_requested_detail_level(self) -> None:
         digest = DigestOutput(title="A Useful Digest", summary="Key points.")
         with patch("main.generate_url_digest", return_value=digest) as generate:

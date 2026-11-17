@@ -29,8 +29,7 @@ From the repository root:
 
 ```shell
 uv sync
-cd backend
-uv run uvicorn main:app --reload
+uv run uvicorn --app-dir backend main:app --reload
 ```
 
 The API is available at <http://127.0.0.1:8000>. Open
@@ -38,6 +37,17 @@ The API is available at <http://127.0.0.1:8000>. Open
 
 AI credentials are optional. Without configured providers, GistBox uses the
 extractive fallback by default.
+
+To run the website locally, open another terminal:
+
+```shell
+cd frontend/nextjs
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+The website is available at <http://localhost:3000>.
 
 ## API
 
@@ -151,6 +161,7 @@ backend/
   tests/           Backend tests
   main.py          FastAPI application
 frontend/nextjs/   Frontend workspace
+render.yaml        Render API service configuration
 mobile/flutter/    Mobile workspace
 ```
 
@@ -175,3 +186,39 @@ The longer-term GistBox product direction includes:
 - Research across multiple URLs and documents.
 - Web and mobile clients using the same backend API.
 - User accounts, persistence, and deployment.
+
+## Deployment
+
+The API is configured as a Render web service in `render.yaml`; the website
+deploys separately to Vercel.
+
+### Deploy the API to Render
+
+1. Push the repository to GitHub and create a Render **Blueprint** from it.
+   Render will use `render.yaml` at the repository root, install the locked
+   dependencies with `uv`, and check the service at `/health`.
+2. Set `FRONTEND_ORIGINS` in the Render service's environment to the exact
+   website origin, for example `https://your-project.vercel.app`. Multiple
+   origins can be comma-separated. Until the Vercel URL is available, use
+   `http://localhost:3000`.
+3. Add any AI provider API keys you want to use in Render's environment
+   settings. Without keys, the extractive fallback remains available.
+4. Copy the service's public URL, such as `https://gistbox-api.onrender.com`.
+
+The Blueprint uses Render's free web-service plan. Free services can spin down
+when idle, so the first request after a quiet period may take longer.
+
+### Deploy the website to Vercel
+
+1. Import the same GitHub repository as a Vercel project.
+2. Set **Root Directory** to `frontend/nextjs`; Vercel should detect Next.js.
+3. Add `NEXT_PUBLIC_API_URL` with the Render service URL (no trailing slash),
+   then deploy.
+4. Update Render's `FRONTEND_ORIGINS` to the exact Vercel production URL and
+   redeploy/restart the API. Add any Vercel preview origins you want to permit
+   as additional comma-separated values.
+
+For local frontend development, set `NEXT_PUBLIC_API_URL` in
+`frontend/nextjs/.env.local` to `http://localhost:8000`. The
+`NEXT_PUBLIC_API_URL` value is public and must contain only the API URL; never
+put API keys in `NEXT_PUBLIC_` variables.

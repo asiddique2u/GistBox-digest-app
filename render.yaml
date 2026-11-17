@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: gistbox-api
+    runtime: python
+    plan: free
+    buildCommand: uv sync --frozen --no-install-project
+    startCommand: uv run --no-sync uvicorn --app-dir backend main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: DIGEST_EXTRACTIVE_FALLBACK
+        value: "true"
