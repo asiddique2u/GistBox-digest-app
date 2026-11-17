@@ -2,13 +2,16 @@
 
 **Turn information into intelligence.**
 
-GistBox turns public web content into clear, useful digests. Its FastAPI
-backend can extract an article or YouTube transcript, generate a digest with
-an available AI provider, and fall back to an extractive summary when needed.
+GistBox turns public web content and uploaded PDFs into clear, useful digests.
+Its FastAPI backend can extract an article, YouTube transcript, or PDF text,
+generate a digest with an available AI provider, and fall back to an extractive
+summary when needed.
 
 ## Features
 
 - Digest public article URLs and YouTube videos with transcripts.
+- Upload PDFs up to 10 MB and 20 pages, including scanned PDFs processed with
+  Tesseract OCR.
 - Choose `short`, `medium`, or `detailed` coverage without a generated
   word-count cap.
 - Try configured AI providers in order, with support for OpenRouter, Gemini,
@@ -22,6 +25,7 @@ an available AI provider, and fall back to an extractive summary when needed.
 
 - Python 3.13 or newer
 - [uv](https://docs.astral.sh/uv/)
+- Tesseract OCR installed and available on `PATH` to process scanned PDFs
 
 ### Install and run
 
@@ -50,6 +54,11 @@ npm run dev
 Open <http://localhost:3000>. The frontend proxies digest requests to
 `http://127.0.0.1:8000` by default. To use another backend, copy
 `frontend/nextjs/.env.example` to `.env.local` and set `DIGEST_API_URL`.
+PDF uploads go directly from the browser to the backend; set
+`NEXT_PUBLIC_DIGEST_API_URL` to that backend's URL. The backend allows
+`localhost:3000` and `127.0.0.1:3000` by default for local development.
+The Render Docker image installs Tesseract automatically; local scanned-PDF
+processing requires the Tesseract executable to be installed separately.
 In PowerShell, use `npm.cmd` (for example, `npm.cmd run dev`) if the execution
 policy blocks the `npm.ps1` shim; this does not require changing the policy.
 
@@ -58,8 +67,10 @@ policy blocks the `npm.ps1` shim; this does not require changing the policy.
 Create a Vercel project from this repository and set its **Root Directory** to
 `frontend/nextjs`. The Vercel configuration is in that directory. Set
 `DIGEST_API_URL` in the Vercel project's environment variables to the HTTPS URL
-of a separately deployed FastAPI backend; the frontend config does not deploy
-the Python backend. `DIGEST_API_URL` is required in production.
+of a separately deployed FastAPI backend. Also set
+`NEXT_PUBLIC_DIGEST_API_URL` to the same URL for direct PDF uploads; this
+variable is embedded in the frontend build. The frontend config does not deploy
+the Python backend, and both variables are required in production.
 
 AI credentials are optional. Without configured providers, GistBox uses the
 extractive fallback by default.
@@ -127,10 +138,31 @@ Only public HTTP(S) destinations are accepted. Private destinations and
 redirects to private addresses are rejected. The endpoint accepts HTML pages
 up to 2 MB; unsupported content types are rejected.
 
+### `POST /digest/pdf`
+
+Upload a PDF as `multipart/form-data` with the fields `file` and optional
+`detail_level` (`short`, `medium`, or `detailed`). Selectable text is extracted
+directly; pages without usable embedded text are processed with Tesseract OCR.
+Uploads are limited to 10 MB and 20 pages. The response includes the uploaded
+filename, detail level, title, and summary. For example:
+
+```shell
+curl.exe -X POST http://127.0.0.1:8000/digest/pdf `
+  -F "file=@report.pdf" `
+  -F "detail_level=detailed"
+```
+
+The browser uploads PDFs directly to the Render API rather than through the
+Next.js proxy. Configure `CORS_ALLOWED_ORIGINS` on Render as a comma-separated
+list containing the exact Vercel production origin and any local development
+origins you need, for example `https://your-site.vercel.app,http://localhost:3000`.
+Do not use a wildcard origin.
+
 Each digest request keeps its source text or YouTube transcript, metadata, and
 result in a request-scoped in-memory context. The context is cleared after the
-response is sent; no request data is currently persisted. Its structured
-fields provide a clear point to add an opt-in retention store later.
+response is sent; no request data is currently persisted. PDF files are
+processed from temporary storage and removed on both success and failure. Its
+structured fields provide a clear point to add an opt-in retention store later.
 
 ## AI provider configuration
 
@@ -202,13 +234,15 @@ uv run python -m unittest discover -s tests
 
 ## Deploy the backend to Render
 
-The root `render.yaml` defines the FastAPI web service and does not create a
-PostgreSQL database. In Render, create a **Blueprint** from this repository;
-Render will use the configured build command, start command, and `/health`
-check. Add any AI provider keys in the Render service's environment settings.
-Then set `DIGEST_API_URL` in Vercel to the Render service's HTTPS URL. The
-free web-service plan may spin down when idle, so the first request after a
-quiet period can take longer.
+The root `render.yaml` defines the FastAPI Docker web service and does not
+create a PostgreSQL database. The Dockerfile installs Tesseract and the Python
+dependencies. In Render, create or sync a **Blueprint** from this repository,
+then set `CORS_ALLOWED_ORIGINS` to the exact Vercel production origin (and any
+local development origin you need). Add any AI provider keys in the Render
+service's environment settings. In Vercel, set both `DIGEST_API_URL` and
+`NEXT_PUBLIC_DIGEST_API_URL` to the Render service's HTTPS URL, then redeploy
+the frontend. The free web-service plan may spin down when idle, so the first
+request after a quiet period can take longer.
 
 ## Roadmap
 

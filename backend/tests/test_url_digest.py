@@ -44,7 +44,7 @@ class URLDigestTests(unittest.TestCase):
                 "app.services.url_digest._extract_web_content",
                 return_value=extracted,
             ),
-            patch("app.services.url_digest.DigestAgent") as agent_class,
+            patch("app.services.content_digest.DigestAgent") as agent_class,
         ):
             agent_class.return_value.generate_digest.return_value = digest
             result = process_digest_request(context)
@@ -83,7 +83,7 @@ class URLDigestTests(unittest.TestCase):
                 "app.services.url_digest._extract_youtube_content",
                 return_value=extracted,
             ),
-            patch("app.services.url_digest.DigestAgent") as agent_class,
+            patch("app.services.content_digest.DigestAgent") as agent_class,
         ):
             agent_class.return_value.generate_digest.return_value = digest
             process_digest_request(context)

@@ -1,11 +1,12 @@
 services:
   - type: web
     name: gistbox-api
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: uv sync --frozen --no-install-project
-    startCommand: uv run --no-sync uvicorn --app-dir backend main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
       - key: DIGEST_EXTRACTIVE_FALLBACK
         value: "true"
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

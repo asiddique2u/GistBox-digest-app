@@ -2,16 +2,15 @@ import ipaddress
 import re
 import socket
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 import trafilatura
 from trafilatura.metadata import extract_metadata
 
-from ..agent.digest_agent import DigestAgent
 from ..agent.digest_models import DigestDetailLevel, DigestOutput
 from ..extraction.youtube import TranscriptFetchError, YouTubeScraper
+from .content_digest import DigestGenerationError, generate_digest_for_content
 from .request_context import DigestRequestContext
 
 MAX_REDIRECTS = 5
@@ -40,10 +39,6 @@ class ContentTooLarge(RuntimeError):
 
 
 class ContentExtractionError(RuntimeError):
-    pass
-
-
-class DigestGenerationError(RuntimeError):
     pass
 
 
@@ -215,20 +210,12 @@ def process_digest_request(context: DigestRequestContext) -> DigestOutput:
     else:
         content = _extract_web_content(context.url)
 
-    context.article_type = content.article_type
-    context.title = content.title
-    context.source_content = content.text
-    digest = DigestAgent().generate_digest(
+    return generate_digest_for_content(
+        context=context,
         title=content.title,
-        content=content.text,
+        text=content.text,
         article_type=content.article_type,
-        detail_level=context.detail_level,
     )
-    if digest is None:
-        raise DigestGenerationError("Digest generation failed")
-    context.digest = digest
-    context.completed_at = datetime.now(timezone.utc)
-    return digest
 
 
 def generate_url_digest(

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
 from ..agent.digest_models import DigestDetailLevel, DigestOutput
@@ -9,6 +10,8 @@ from ..agent.digest_models import DigestDetailLevel, DigestOutput
 class DigestRequestContext:
     url: str
     detail_level: DigestDetailLevel
+    source_type: Literal["url", "pdf"] = "url"
+    filename: str | None = None
     request_id: UUID | None = field(default_factory=uuid4)
     received_at: datetime | None = field(
         default_factory=lambda: datetime.now(timezone.utc)
@@ -22,6 +25,8 @@ class DigestRequestContext:
     def clear(self) -> None:
         self.url = ""
         self.detail_level = "detailed"
+        self.source_type = "url"
+        self.filename = None
         self.request_id = None
         self.received_at = None
         self.completed_at = None

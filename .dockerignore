@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+**/.env
+**/.env.*
+!**/.env.example
+frontend/
+mobile/
+docker-compose.yml
+backend/tests/
