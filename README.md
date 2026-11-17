@@ -11,8 +11,8 @@ an available AI provider, and fall back to an extractive summary when needed.
 - Digest public article URLs and YouTube videos with transcripts.
 - Choose `short`, `medium`, or `detailed` coverage without a generated
   word-count cap.
-- Try configured AI providers in order, with support for OpenAI, Gemini,
-  Anthropic, Ollama, and OpenRouter.
+- Try configured AI providers in order, with support for OpenRouter, Gemini,
+  Anthropic, Ollama, and OpenAI.
 - Use an extractive fallback when AI providers are unavailable.
 - Explore the API interactively with the generated OpenAPI docs.
 
