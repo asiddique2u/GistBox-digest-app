@@ -16,16 +16,19 @@ import {
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 type DetailLevel = "short" | "medium" | "detailed";
 
 type DigestResponse = {
-  url: string;
   detail_level: DetailLevel;
   title: string;
   summary: string;
-};
+} & ({ url: string; filename?: never } | { filename: string; url?: never });
+
+type SourceMode = "url" | "pdf";
+
+const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
 const DETAIL_OPTIONS: {
   value: DetailLevel;
@@ -58,8 +61,11 @@ function isDigestResponse(value: unknown): value is DigestResponse {
     return false;
   }
 
+  const hasUrl = typeof value.url === "string" && value.url.length > 0;
+  const hasFilename =
+    typeof value.filename === "string" && value.filename.length > 0;
   return (
-    typeof value.url === "string" &&
+    hasUrl !== hasFilename &&
     typeof value.title === "string" &&
     typeof value.summary === "string" &&
     (value.detail_level === "short" ||
@@ -77,7 +83,10 @@ function getHostName(url: string) {
 }
 
 export default function Home() {
+  const [sourceMode, setSourceMode] = useState<SourceMode>("url");
   const [url, setUrl] = useState("");
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const [detailLevel, setDetailLevel] = useState<DetailLevel>("detailed");
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,28 +101,67 @@ export default function Home() {
     setDigest(null);
     setCopyState("idle");
 
-    let normalizedUrl: string;
-    try {
-      const parsedUrl = new URL(url.trim());
-      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-        throw new Error("Enter a public HTTP or HTTPS link.");
-      }
-      normalizedUrl = parsedUrl.toString();
-    } catch {
-      setError("Enter a valid article or YouTube link beginning with http:// or https://.");
-      return;
-    }
+    let targetUrl = "/api/digest";
+    let requestInit: RequestInit;
 
-    setIsLoading(true);
-    try {
-      const response = await fetch("/api/digest", {
+    if (sourceMode === "url") {
+      let normalizedUrl: string;
+      try {
+        const parsedUrl = new URL(url.trim());
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+          throw new Error("Enter a public HTTP or HTTPS link.");
+        }
+        normalizedUrl = parsedUrl.toString();
+      } catch {
+        setError(
+          "Enter a valid article or YouTube link beginning with http:// or https://.",
+        );
+        return;
+      }
+      requestInit = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: normalizedUrl,
           detail_level: detailLevel,
         }),
-      });
+      };
+    } else {
+      if (!pdfFile) {
+        setError("Choose a PDF file to create a digest.");
+        return;
+      }
+      if (pdfFile.size > MAX_PDF_BYTES) {
+        setError("The PDF exceeds the 10 MB limit.");
+        return;
+      }
+
+      const backendBaseUrl =
+        process.env.NEXT_PUBLIC_DIGEST_API_URL ??
+        (process.env.NODE_ENV === "production"
+          ? null
+          : "http://127.0.0.1:8000");
+      if (!backendBaseUrl) {
+        setError("The PDF upload service URL is not configured.");
+        return;
+      }
+
+      try {
+        targetUrl = new URL("/digest/pdf", backendBaseUrl).toString();
+      } catch {
+        setError("The PDF upload service URL is misconfigured.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", pdfFile);
+      formData.append("detail_level", detailLevel);
+      requestInit = { method: "POST", body: formData };
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(targetUrl, requestInit);
 
       let payload: unknown;
       try {
@@ -161,6 +209,10 @@ export default function Home() {
 
   function startOver() {
     setUrl("");
+    setPdfFile(null);
+    if (pdfInputRef.current) {
+      pdfInputRef.current.value = "";
+    }
     setDigest(null);
     setError(null);
     setCopyState("idle");
@@ -198,8 +250,8 @@ export default function Home() {
             <span>Skip the scroll.</span>
           </h1>
           <p className="hero-description">
-            Turn a long article or video into a clear, detailed digest you can
-            actually use.
+            Turn a long article, video, or PDF into a clear, detailed digest
+            you can actually use.
           </p>
         </div>
         <div className="hero-note" aria-label="From link to understanding">
@@ -222,52 +274,132 @@ export default function Home() {
         >
           <div className="panel-heading">
             <div className="step-label">
-              <span>01</span> START WITH A LINK
+              <span>01</span> CHOOSE A SOURCE
             </div>
             <h2>What are you reading?</h2>
-            <p>Drop in an article or YouTube link. We’ll take it from here.</p>
+            <p>Paste a link or upload a PDF. We’ll take it from here.</p>
           </div>
 
-          <label className="field-label" htmlFor="source-url">
-            Article or video URL
-          </label>
-          <div className={`url-field ${error ? "url-field-error" : ""}`}>
-            <Link2 size={19} aria-hidden="true" />
-            <input
-              autoComplete="url"
-              id="source-url"
-              inputMode="url"
-              name="url"
-              onChange={(event) => {
-                setUrl(event.target.value);
-                if (error) {
-                  setError(null);
-                }
-              }}
-              placeholder="https://youtube.com/watch?v=..."
-              required
-              type="url"
-              value={url}
-              aria-describedby={error ? "form-error" : undefined}
-              aria-invalid={Boolean(error)}
+          <div className="source-mode" role="group" aria-label="Source type">
+            <button
+              aria-pressed={sourceMode === "url"}
+              className={sourceMode === "url" ? "source-mode-selected" : ""}
               disabled={isLoading}
-            />
-            {url.includes("youtube.com") || url.includes("youtu.be") ? (
-              <Play
-                className="url-type-icon"
-                size={18}
-                aria-label="Video link"
-              />
-            ) : null}
+              onClick={() => {
+                setSourceMode("url");
+                setError(null);
+              }}
+              type="button"
+            >
+              <Link2 size={15} />
+              Link
+            </button>
+            <button
+              aria-pressed={sourceMode === "pdf"}
+              className={sourceMode === "pdf" ? "source-mode-selected" : ""}
+              disabled={isLoading}
+              onClick={() => {
+                setSourceMode("pdf");
+                setError(null);
+              }}
+              type="button"
+            >
+              <FileText size={15} />
+              PDF
+            </button>
           </div>
+
+          {sourceMode === "url" ? (
+            <>
+              <label className="field-label" htmlFor="source-url">
+                Article or video URL
+              </label>
+              <div className={`url-field ${error ? "url-field-error" : ""}`}>
+                <Link2 size={19} aria-hidden="true" />
+                <input
+                  autoComplete="url"
+                  id="source-url"
+                  inputMode="url"
+                  name="url"
+                  onChange={(event) => {
+                    setUrl(event.target.value);
+                    if (error) {
+                      setError(null);
+                    }
+                  }}
+                  placeholder="https://youtube.com/watch?v=..."
+                  required
+                  type="url"
+                  value={url}
+                  aria-describedby={error ? "form-error" : undefined}
+                  aria-invalid={Boolean(error)}
+                  disabled={isLoading}
+                />
+                {url.includes("youtube.com") || url.includes("youtu.be") ? (
+                  <Play
+                    className="url-type-icon"
+                    size={18}
+                    aria-label="Video link"
+                  />
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="field-label" htmlFor="source-pdf">
+                PDF document
+              </label>
+              <div className={`file-field ${error ? "url-field-error" : ""}`}>
+                <FileText size={19} aria-hidden="true" />
+                <input
+                  accept=".pdf,application/pdf"
+                  aria-describedby={error ? "form-error" : "pdf-hint"}
+                  aria-invalid={Boolean(error)}
+                  disabled={isLoading}
+                  id="source-pdf"
+                  name="file"
+                  ref={pdfInputRef}
+                  onChange={(event) => {
+                    const selectedFile = event.target.files?.[0] ?? null;
+                    if (
+                      selectedFile &&
+                      !selectedFile.name.toLowerCase().endsWith(".pdf")
+                    ) {
+                      event.currentTarget.value = "";
+                      setPdfFile(null);
+                      setError("Choose a PDF file.");
+                      return;
+                    }
+                    if (selectedFile && selectedFile.size > MAX_PDF_BYTES) {
+                      event.currentTarget.value = "";
+                      setPdfFile(null);
+                      setError("The PDF exceeds the 10 MB limit.");
+                      return;
+                    }
+                    setPdfFile(selectedFile);
+                    setError(null);
+                  }}
+                  type="file"
+                />
+                {pdfFile ? (
+                  <span className="selected-file-name">{pdfFile.name}</span>
+                ) : null}
+              </div>
+            </>
+          )}
           {error ? (
             <p className="form-error" id="form-error" role="alert">
               {error}
             </p>
-          ) : (
+          ) : sourceMode === "url" ? (
             <p className="field-hint">
               <span className="hint-dot" />
               Public articles and videos with transcripts
+            </p>
+          ) : (
+            <p className="field-hint" id="pdf-hint">
+              <span className="hint-dot" />
+              PDF up to 10 MB and 20 pages; scanned pages use OCR
             </p>
           )}
 
@@ -304,7 +436,9 @@ export default function Home() {
 
           <button
             className="submit-button"
-            disabled={isLoading || !url.trim()}
+            disabled={
+              isLoading || (sourceMode === "url" ? !url.trim() : !pdfFile)
+            }
             type="submit"
           >
             {isLoading ? (
@@ -396,16 +530,24 @@ export default function Home() {
                 <span>{digest.detail_level} detail</span>
               </div>
               <h2 className="digest-title">{digest.title}</h2>
-              <a
-                className="source-link"
-                href={digest.url}
-                rel="noreferrer"
-                target="_blank"
-              >
-                <Link2 size={15} />
-                {getHostName(digest.url)}
-                <ArrowUpRight size={13} />
-              </a>
+              {digest.url ? (
+                <a
+                  className="source-link"
+                  href={digest.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <Link2 size={15} />
+                  {getHostName(digest.url)}
+                  <ArrowUpRight size={13} />
+                </a>
+              ) : null}
+              {digest.filename ? (
+                <span className="source-link">
+                  <FileText size={15} />
+                  {digest.filename}
+                </span>
+              ) : null}
               <div className="digest-divider" />
               <div className="markdown-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -443,8 +585,8 @@ export default function Home() {
                   <Sparkles size={18} />
                 </div>
                 <div className="floating-source-chip">
-                  <Play size={13} />
-                  Article or video
+                  <FileText size={13} />
+                  Article, video, or PDF
                 </div>
               </div>
               <p className="empty-eyebrow">YOUR CLEARER TAKEAWAY</p>
@@ -474,7 +616,7 @@ export default function Home() {
             </span>
             <div>
               <span className="how-step-number">01 / DROP A LINK</span>
-              <p>Bring an article or a video with a transcript.</p>
+              <p>Bring an article, a video with a transcript, or a PDF.</p>
             </div>
           </div>
           <div className="how-step">
