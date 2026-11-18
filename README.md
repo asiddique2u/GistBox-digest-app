@@ -77,6 +77,14 @@ extractive fallback by default.
 
 The website is available at <http://localhost:3000>.
 
+## Run the Android app
+
+The Flutter Android client is in `mobile/flutter`. Its local setup, API
+configuration, tests, and Google Play release notes are documented in
+[`mobile/flutter/README.md`](mobile/flutter/README.md). The app uses the
+existing backend's URL and PDF digest endpoints; it does not require user
+accounts or server-side history.
+
 ## API
 
 ### `POST /digest`
